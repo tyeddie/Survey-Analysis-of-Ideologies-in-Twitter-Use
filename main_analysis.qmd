@@ -1,0 +1,17 @@
+---
+title: "Main_Analysis"
+author: "Eddie"
+format: pdf
+editor: visual
+---
+
+```{r echo=FALSE}
+library(tidyverse)
+```
+
+```{r}
+mydata <- read_csv("pew_data.csv")
+head(mydata)
+```
+
+

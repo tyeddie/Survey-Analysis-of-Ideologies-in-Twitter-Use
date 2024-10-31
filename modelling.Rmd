@@ -1,0 +1,130 @@
+---
+title: "Untitled"
+author: "Eddie Tian"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(readr)
+library(tidyr)
+library(broom)
+library(glmnet)
+mydata <- read_csv("pew_data.csv")
+head(mydata)
+```
+
+```{r}
+mydata_cleaned_demo <- mydata[!apply(mydata, 1, function(row) any(row %in% c("Refused", "Something else"))), ]
+# Further filter the dataframe to exclude rows where the 'twdemocr' column has values "Refused" or "Has no impact on American democracy"
+mydata_cleaned_demo <- mydata_cleaned_demo[!mydata_cleaned_demo$twdemocr %in% c("Refused", "Has no impact on American democracy"), ]
+mydata_cleaned_demo <- mydata_cleaned_demo[!is.na(mydata_cleaned_demo$f_reg), ]
+```
+
+```{r}
+mydata_cleaned_demo$twdemocr <- ifelse(mydata_cleaned_demo$twdemocr == "Mostly GOOD for American democracy", 1, 0)
+mydata_cleaned_demo$twdemocr <- as.factor(mydata_cleaned_demo$twdemocr)
+mydata_cleaned_demo$f_party_ <- as.factor(mydata_cleaned_demo$f_party_)
+mydata_cleaned_demo$f_agecat <- as.factor(mydata_cleaned_demo$f_agecat)
+mydata_cleaned_demo$f_gender <- as.factor(mydata_cleaned_demo$f_gender)
+mydata_cleaned_demo$f_educca <- as.factor(mydata_cleaned_demo$f_educca)
+mydata_cleaned_demo$f_racecm <- as.factor(mydata_cleaned_demo$f_racecm)
+mydata_cleaned_demo$f_inc_sd <- as.factor(mydata_cleaned_demo$f_inc_sd)
+mydata_cleaned_demo$f_reg <- as.factor(mydata_cleaned_demo$f_reg)
+mydata_cleaned_demo$f_ideo <- as.factor(mydata_cleaned_demo$f_ideo)
+head(mydata_cleaned_demo)
+```
+
+
+```{r}
+X <- mydata_cleaned_demo %>%
+  select(twdemocr, f_party_, f_agecat, f_gender, f_educca, f_racecm, f_inc_sd, f_reg, f_ideo)
+
+# Save the data frame to a CSV file
+write.csv(X, "cleaned_data.csv", row.names = FALSE)
+
+
+m1 <- glm(mydata_cleaned_demo$twdemocr ~., data = X, family = binomial)
+summary(m1)
+```
+
+```{r}
+# backward selection
+m_bs.aic = step(m1, direction="backward")
+```
+
+```{r}
+attach(X)
+m_null = glm(twdemocr~1, family="binomial")
+m_fs.aic = step(m_null, scope=twdemocr~f_party_+f_agecat+f_gender+f_educca+f_racecm+f_inc_sd+f_reg+f_ideo, direction="both")
+```
+```{r}
+m2 <- glm(X$twdemocr ~ f_party_ + f_ideo + f_racecm + f_gender + f_agecat + f_educca, family = binomial)
+summary(m2)
+
+with(m2, cbind(res.deviance = deviance, df = df.residual, p = pchisq(deviance, df.residual, lower.tail=FALSE)))
+```
+
+
+
+```{r}
+# lasso
+y <- mydata_cleaned_demo$twdemocr
+X <- model.matrix(~ f_party_ + f_agecat + f_gender + f_educca + f_racecm + f_inc_sd + f_reg + f_ideo, 
+                  data = mydata_cleaned_demo)[, -1] 
+# Fit LASSO with cross-validation to find the optimal lambda
+lasso_cv <- cv.glmnet(X, y, alpha = 1, family = "binomial")
+
+# Get the best lambda value
+best_lambda <- lasso_cv$lambda.min
+
+lasso_model <- glmnet(X, y, alpha = 1, family = "binomial", lambda = best_lambda)
+
+# Display the coefficients of the selected variables
+print(coef(lasso_model))
+```
+
+```{r}
+library(car)
+# Sample data
+survey_data <- data.frame(
+  Gender = as.factor(c("Male", "Female", "Male", "Female", "Male", "Female", "Male", "Female", "Male", "Female")),
+  Group = as.factor(c("A", "B", "A", "C", "B", "C", "A", "B", "C", "A")),
+  Score = c(80, 75, 85, 90, 70, 88, 78, 92, 84, 81)
+)
+head(survey_data)
+# Shapiro-Wilk normality test
+shapiro.test(survey_data$Score)
+# Q-Q plot
+qqnorm(survey_data$Score)
+qqline(survey_data$Score, col = "blue")
+leveneTest(Score ~ Gender * Group, data = survey_data)
+```
+```{r}
+# Run ANOVA
+anova_result <- aov(Score ~ Gender * Group, data = survey_data)
+summary(anova_result)
+```
+```{r}
+# Tukey's Honest Significant Difference test
+TukeyHSD(anova_result)
+```
+```{r}
+# Effect size calculation
+library(effectsize)
+eta_squared(anova_result)
+```
+```{r}
+library(broom)
+
+# Run the ANOVA
+anova_result <- aov(Score ~ Gender * Group, data = survey_data)
+
+# Tidy the ANOVA results
+anova_table <- tidy(anova_result)
+
+# View the table
+print(anova_table)
+```
+
