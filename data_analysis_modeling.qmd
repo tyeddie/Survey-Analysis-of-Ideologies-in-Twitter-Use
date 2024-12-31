@@ -1,0 +1,525 @@
+---
+title: "Slides_Data_Analysis"
+author: "Eddie Tian"
+format: revealjs
+editor: visual
+---
+
+### Importing Packages
+
+```{r}
+library(tidyverse)
+library(gt)
+library(nnet)
+library(ordinal)
+library(effects)
+library(janitor)
+library(FSA)
+library(MatchIt)
+library(cobalt)
+library(MASS)
+library(tidyr)
+```
+
+### Loading the Dataset
+
+```{r}
+mydata <- read_csv("Dataset/pew_data.csv")
+head(mydata)
+```
+
+### Data Transformation
+
+```{r echo=FALSE}
+# re-coding variables
+# demographics: gender, age, metro, ideology, party
+# variables: use_see_diff, freq_meet_disagree, follow_similar, freq_see_diff, porl
+mydata <- mydata |> 
+  mutate(
+    # gender
+    gender = case_when(
+      f_gender == "A man" ~ "Man",
+      f_gender == "A woman" ~ "Woman",
+      TRUE ~ NA_character_
+    ),
+    # age category
+    age = case_when(
+      f_agecat == "18-29" ~ "young adult",
+      f_agecat == "30-49" ~ "mid adult",
+      f_agecat == "50-64" ~ "senior",
+      f_agecat == "65+" ~ "65+",
+      TRUE ~ NA_character_
+    ),
+    education = case_when(
+      f_educca %in% c("Some College", "College graduate+") ~ 1,
+      f_educca == "H.S. graduate or less" ~ 0,
+      TRUE ~ NA_real_
+    ),
+    # metropolitan or not
+    metro = ifelse(
+      f_metro == "Metropolitan", "Metro", "Not_metro"
+    ),
+    # attended a political rally or campaign event or not in the past year
+    rally = case_when(
+      civeng_9 == "No, I have not done this in the past year" ~ 0,
+      civeng_9 == "Yes, I have done this in the past year" ~ 1,
+      TRUE ~ NA_real_
+    ),
+    # re-code ideology: moderate(0); liberal/conservative(1); very liberal/very conservative(2)
+    ideology = case_when(
+      #f_ideo == "Moderate" ~ 0,
+      #f_ideo == "Liberal" ~ -1,
+      #f_ideo == "Conservative" ~ 1,
+      #f_ideo == "Very liberal" ~ -2,
+      #f_ideo == "Very conservative" ~ 2,
+     # TRUE ~ NA_real_
+      f_ideo %in% c("Moderate", "Liberal", "Conservative") ~ "Moderate",
+      f_ideo %in% c("Very liberal", "Very conservative") ~ "Extreme",
+      TRUE ~ NA_character_
+    ),
+    # party identification: independent(0), other(1)
+    #party = case_when(
+      #f_party_ == "Independent" ~ 0,
+     # f_party_ %in% c("Democrat", "Republican", "Something else") ~ 1,
+     # TRUE ~ NA_real_
+   # ),
+    # recode why use: for seeing different opinion: Yes(1), No(0)
+    use_see_diff = case_when(
+      whyuse_4 == "Yes, a reason I use Twitter" ~ 1,
+      whyuse_4 == "No, not a reason I use Twitter" ~ 0,
+      TRUE ~ NA_real_
+    ),
+    # how often encounter disagreement 
+    freq_meet_disagree = case_when(
+      enctrdis == "None of them" ~ 0,
+      enctrdis == "Very few of them" ~ 1,
+      enctrdis == "Some of them" ~ 2,
+      enctrdis == "Most of them" ~ 3,
+      enctrdis == "Almost all of them" ~ 4,
+      TRUE ~ NA_real_
+    ),
+    # follow similar or different political actors; similar(0), mix(1), different (2)
+    follow_similar = case_when(
+      qbeliefp == "Similar political beliefs to you" ~ 0 ,
+      qbeliefp == "A mix of political beliefs"  ~ 1,
+      qbeliefp == "Different political beliefs from you" ~ 2,
+      TRUE ~ NA_real_
+    ),
+    # how often see different political views: similar(0), mix(1), different (2)
+    freq_see_diff = case_when(
+      qbeliefg == "Similar political beliefs to you" ~ 0,
+      qbeliefg == "A mix of political beliefs" ~ 1,
+      qbeliefg == "Different political beliefs from you" ~ 2,
+      TRUE ~ NA_real_
+    ),
+    # post or lurk
+    porl = case_when(
+      qbeliefp == "See what others are saying" ~ 0,
+      qbeliefp == "An equal mix of both" ~ 1,
+      qbeliefp == "Express your own opinions" ~ 2,
+      TRUE ~ NA_real_
+    )
+  )
+```
+
+```{r}
+# EDA: distribution of ideology
+table(mydata$ideology)
+prop.table(table(mydata$ideology))
+summary(mydata$ideology)
+
+mydata %>%
+  group_by(ideology) %>%
+  summarize(count = n()) %>%
+  mutate(proportion = count / sum(count))
+```
+
+```{r}
+# whether seeing different views is a reason for using Twitter
+mydata |> 
+  filter(!is.na(ideology), !is.na(use_see_diff)) |>
+  mutate(use_see_diff = as.factor(use_see_diff)) |>
+  group_by(ideology, use_see_diff) |> 
+  summarize(count = n(), .groups = "drop") |>
+  group_by(ideology) |> 
+  mutate(proportion = count / sum(count))
+
+mydata |> 
+  filter(!is.na(ideology), !is.na(use_see_diff)) |>
+  mutate(use_see_diff = as.factor(use_see_diff)) |>
+  group_by(ideology, use_see_diff) |> 
+  summarize(count = n(), .groups = "drop") |>
+  group_by(ideology) |> 
+  mutate(proportion = count / sum(count)) |>
+  ggplot(aes(x = ideology, y = proportion, fill = use_see_diff)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "To see different views is a reason to use Twitter by Ideology",
+       x = "Ideology", y = "Proportion", fill = "Legend") +
+  scale_fill_manual(values = c("#F8766D", "#00BFC4"),
+                    labels = c("Yes, a reason to use Twitter", "No, not a reason to use Twitter")) +
+  theme_minimal(base_size = 12)
+
+mydata |> 
+  filter(!is.na(ideology), !is.na(use_see_diff)) |> 
+  mutate(use_see_diff = as.factor(use_see_diff)) |> 
+  group_by(ideology, use_see_diff) |> 
+  summarize(response_count = n(), .groups = "drop") |> 
+  group_by(ideology) |> 
+  mutate(response_proportion = response_count / sum(response_count)) |> 
+  ungroup() |> 
+  pivot_wider(names_from = use_see_diff, values_from = c(response_count, response_proportion), 
+              names_sep = "_")
+
+mydata |> 
+  filter(!is.na(use_see_diff)) |> 
+  mutate(use_see_diff = as.factor(use_see_diff)) |> 
+  group_by(use_see_diff) |> 
+  summarize(response_count = n(), .groups = "drop") |> 
+  mutate(response_proportion = response_count / sum(response_count))
+```
+
+```{r}
+# Step 1: Filter out missing values
+cleaned_data <- mydata %>%
+  filter(!is.na(ideology), !is.na(use_see_diff))
+# Step 2: Create a contingency table
+contingency_table <- table(cleaned_data$ideology, cleaned_data$use_see_diff)
+# Display the contingency table
+print(contingency_table)
+# Step 3: Perform the Chi-Squared Test
+chi_squared_test <- chisq.test(contingency_table)
+# Display the test results
+print(chi_squared_test)
+```
+
+```{r}
+# disagreement by ideology
+ggplot(mydata |> filter(!is.na(ideology) & is.finite(freq_meet_disagree)), aes(x = freq_meet_disagree, y = ..density..)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", color = "white") +
+  facet_wrap(~ ideology) +
+  labs(title = "Histogram of encountered disagreement with political tweets by ideology from EDA",
+    x = "How often they encounter disagreement with 0 = None of them, 4 = Almost all of them",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Filter the data
+filtered_data <- mydata %>%
+  filter(!is.na(ideology) & is.finite(freq_meet_disagree))
+
+# Calculate summary statistics
+filtered_data %>%
+  group_by(ideology) %>%
+  summarize(
+    count = n(),
+    mean = mean(freq_meet_disagree),
+    sd = sd(freq_meet_disagree)
+  )
+
+filtered_data %>%
+  group_by(ideology, freq_meet_disagree) %>%
+  summarize(count = n(), .groups = 'drop') %>%
+  mutate(percentage = count / sum(count) * 100)
+contigency_table = table(filtered_data$ideology, filtered_data$freq_meet_disagree)
+contigency_table
+chi_sq_test <- chisq.test(contigency_table)
+chi_sq_test
+```
+
+```{r}
+# mean perceived similarity / difference with the political actors they follow
+mydata |>
+  filter(!is.na(ideology)) |>
+  group_by(ideology) |>
+  mutate(follow_similar = as.numeric(follow_similar)) |>
+  summarize(mean_follow_similar = mean(follow_similar, na.rm=TRUE))
+
+mydata |>
+  filter(!is.na(ideology)) |>
+  group_by(ideology) |>
+  mutate(follow_similar = as.numeric(follow_similar)) |>
+  summarize(mean_follow_similar = mean(follow_similar, na.rm=TRUE)) |>
+  ggplot(aes(x = reorder(ideology, mean_follow_similar), y = mean_follow_similar, fill = mean_follow_similar)) +
+  geom_col(show.legend = F) +
+  scale_fill_gradient(low = "lightblue", high = "steelblue") +
+  labs(
+    title = "Mean percieved difference of followered political actors by ideology",
+    subtitle = "0: similar; 1: mixed; 2: different",
+    x = "Ideology",
+    y = "Perceived difference",
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))
+
+# medium, proportion
+mydata |>
+  filter(!is.na(ideology) & !is.na(follow_similar)) |>
+  group_by(ideology) |>
+  summarize(median_follow_similar = median(as.numeric(follow_similar), na.rm = TRUE))
+
+mydata |>
+  filter(!is.na(ideology) & !is.na(follow_similar)) |>
+  group_by(ideology) |>
+  summarize(mode_follow_similar = follow_similar[which.max(tabulate(as.numeric(follow_similar)))])
+```
+
+```{r}
+# Filter out missing values
+cleaned_data <- mydata %>%
+  filter(!is.na(ideology), !is.na(follow_similar))
+
+# Convert variables to appropriate types
+cleaned_data$ideology <- as.factor(cleaned_data$ideology)
+cleaned_data$follow_similar <- as.numeric(cleaned_data$follow_similar)
+
+# Perform the Kruskal-Wallis test
+kruskal_test <- kruskal.test(follow_similar ~ ideology, data = cleaned_data)
+
+# Display the test results
+print(kruskal_test)
+
+# Perform Dunn's test
+dunn_test <- dunnTest(follow_similar ~ ideology, data = cleaned_data, method = "bonferroni")
+
+# Display the test results
+print(dunn_test)
+```
+
+```{r}
+# distribution of perceived similarity by ideology
+mydata |> 
+  filter(!is.na(ideology), !is.na(follow_similar)) |>
+  group_by(ideology, follow_similar) |> 
+  summarize(count = n(), .groups = "drop") |>
+  group_by(ideology) |> 
+  mutate(proportion = count / sum(count)) 
+
+mydata |> 
+  filter(!is.na(ideology), !is.na(follow_similar)) |>
+  group_by(ideology, follow_similar) |> 
+  summarize(count = n(), .groups = "drop") |>
+  group_by(ideology) |> 
+  mutate(proportion = count / sum(count)) |>
+  ggplot(aes(x = ideology, y = proportion, fill = as.factor(follow_similar))) +
+  geom_bar(stat = "identity", position = "stack") +  # Stacked bar plot
+  scale_y_continuous(labels = scales::percent) +  # Format y-axis as percentages
+  labs(
+    title = "Proportional distribution of follow_similar by Ideology from EDA",
+    x = "Ideology",
+    y = "Proportion",
+    fill = "Legend"
+  ) +
+  scale_fill_manual(values = c("#F8766D", "#00BA38", "#619CFF"),
+                    labels = c("similar", "mixed", "different")) +
+  theme_minimal(base_size = 12)
+```
+
+```{r}
+# Apply filtering
+filtered_data <- mydata %>%
+  filter(!is.na(ideology), !is.na(follow_similar))
+
+contingency_table <- table(filtered_data$ideology, filtered_data$follow_similar)
+print(contingency_table)
+# Perform the Chi-Squared Test
+chi_squared_test <- chisq.test(contingency_table)
+# Display the test results
+print(chi_squared_test)
+# there is a statistically significant association between users’ ideological stance and the types of people they perceive themselves following online.
+```
+
+### Statistical Modeling: Ordinal Regression
+
+```{r}
+# statistical modeling
+# ordinal regression follower_similar
+mydata$follow_similar <- as.factor(mydata$follow_similar)
+mydata$ideology <- as.factor(mydata$ideology)
+mydata$metro <- as.factor(mydata$metro)
+mydata$gender <- as.factor(mydata$gender)
+m1 <- clm(follow_similar ~ ideology + metro + gender, data = mydata, link = "logit")
+summary(m1)
+```
+
+### Propensity Score Matching
+
+```{r}
+# propensity score matching
+mydata <- mydata |>
+  mutate(ideology_extremity = case_when(
+      f_ideo %in% c("Moderate", "Liberal", "Conservative") ~ 0,
+      f_ideo %in% c("Very liberal", "Very conservative") ~ 1,
+      TRUE ~ NA_real_))
+
+matching_vars <- c("gender","age", "education", "metro", "rally", "ideology_extremity", "follow_similar", "use_see_diff", "freq_meet_disagree")
+
+data_matching <- mydata |>
+  dplyr::select(all_of(matching_vars)) |>
+  drop_na()
+
+# OLS
+mydata$ideology_extremity <- as.factor(mydata$ideology_extremity)
+mydata$follow_similar <- as.factor(mydata$follow_similar)
+mydata$use_see_diff <-as.factor(mydata$use_see_diff)
+mydata$freq_meet_disagree <-as.factor(mydata$freq_meet_disagree)
+
+# H1: exposure to congruent info
+m1 <- clm(freq_meet_disagree ~ gender + age + education + metro + rally + ideology_extremity, data = mydata, link = "logit")
+summary(m1)
+# H2: homophily
+m2 <- clm(follow_similar ~ gender + age + education + metro + rally + ideology_extremity, data = mydata, link = "logit")
+summary(m2)
+# H3: open-mindedness
+m3 <- glm(use_see_diff ~ gender + age + education + metro + rally + ideology_extremity, data = mydata, family = "binomial")
+summary(m3)
+```
+
+### Matching for H1
+
+```{r}
+# perform matching
+# H1
+cem_match = matchit(ideology_extremity ~ gender + age + education + metro + rally,
+                    data = data_matching,
+                    method = "cem")
+
+```
+
+```{r}
+# extract matched datasets
+# H1
+cem_data = match.data(cem_match)
+```
+
+```{r}
+# calculate treatment effect
+# H1
+mydata$freq_meet_disagree <-as.factor(mydata$freq_meet_disagree)
+cem_effect = clm(freq_meet_disagree ~ ideology_extremity, data = cem_data, 
+                 weights = weights, link = "logit")
+summary(cem_effect)
+plot(summary(cem_match))
+```
+
+```{r}
+# love plots for both matching methods
+love.plot(cem_match, stats = c("mean.dif", "var.ratio"),
+          threshold = c(m = .1, v = 2),
+          var.order = "unadjusted",
+          abs = TRUE,
+          colors = c("red", "blue"),
+          shapes = c(19, 17),
+          title = "CEM: Love Plot")
+```
+
+### Matching for H2
+
+```{r}
+# calculate treatment effect
+# H2
+cem_effect2 = clm(follow_similar ~ ideology_extremity, data = cem_data, 
+                 weights = weights, link = "logit")
+summary(cem_effect2)
+```
+
+### Matching for H3
+
+```{r}
+# calculate treatment effect
+# H3
+cem_effect3 = clm(use_see_diff ~ ideology_extremity, data = cem_data, 
+                 weights = weights, link = "logit")
+summary(cem_effect3)
+```
+
+### Complete Modeling for H1
+
+```{r}
+mydata <- mydata |>
+  mutate(ideology_extremity = case_when(
+      f_ideo %in% c("Moderate", "Liberal", "Conservative") ~ 0,
+      f_ideo %in% c("Very liberal", "Very conservative") ~ 1,
+      TRUE ~ NA_real_),
+      freq_meet_disagree = case_when(
+      enctrdis == "None of them" ~ 0,
+      enctrdis == "Very few of them" ~ 1,
+      enctrdis == "Some of them" ~ 2,
+      enctrdis == "Most of them" ~ 3,
+      enctrdis == "Almost all of them" ~ 4,
+      TRUE ~ NA_real_
+    ))
+
+mydata$freq_meet_disagree <-as.factor(mydata$freq_meet_disagree)
+
+matching_vars <- c("gender","age", "education", "metro", "rally", "ideology_extremity", "freq_meet_disagree")
+
+data_matching <- mydata |>
+  dplyr::select(all_of(matching_vars)) |>
+  drop_na()
+
+# H1: exposure to congruent info
+m1 <- clm(freq_meet_disagree ~ gender + age + education + metro + rally + ideology_extremity, data = mydata, link = "logit")
+summary(m1)
+
+# perform matching
+# H1
+cem_match = matchit(ideology_extremity ~ gender + age + education + metro + rally,
+                    data = data_matching,
+                    method = "cem")
+
+# extract matched datasets
+# H1
+cem_data = match.data(cem_match)
+
+# calculate treatment effect
+# H1
+cem_effect = clm(freq_meet_disagree ~ ideology_extremity, data = cem_data, 
+                 weights = weights, link = "logit")
+summary(cem_effect)
+plot(summary(cem_match))
+
+# love plots for both matching methods
+love.plot(cem_match, stats = c("mean.dif", "var.ratio"),
+          threshold = c(m = .1, v = 2),
+          var.order = "unadjusted",
+          abs = TRUE,
+          colors = c("red", "blue"),
+          shapes = c(19, 17),
+          title = "CEM: Love Plot")
+
+
+```
+
+### Complete Modeling for H2
+
+```{r}
+# H2: homophily
+# baseline model
+mydata$follow_similar <-as.factor(mydata$follow_similar)
+m2 <- clm(follow_similar ~ gender + age + education + metro + rally + ideology_extremity, data = mydata, link = "logit")
+summary(m2)
+
+# treatment effect
+cem_effect2 = clm(follow_similar ~ ideology_extremity, data = cem_data, 
+                 weights = weights, link = "logit")
+summary(cem_effect2)
+```
+
+### Complete Modeling for H3
+
+```{r}
+# H3: open-mindedness to different political views
+mydata$use_see_diff <-as.factor(mydata$use_see_diff)
+m3 <- glm(use_see_diff ~ gender + age + education + metro + rally + ideology_extremity, data = mydata, family = "binomial")
+summary(m3)
+
+# treatment effect# 
+cem_effect3 = glm(use_see_diff ~ ideology_extremity, data = cem_data, family = "binomial")
+summary(cem_effect3)
+```
+
+
+
